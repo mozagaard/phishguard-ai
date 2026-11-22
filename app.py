@@ -47,6 +47,11 @@ div[data-baseweb="input"] input {{ color: {TEXT}; }}
 button[kind="primary"]:hover {{ background: #00e0a8; color: {BG}; }}
 
 button[kind="primary"], button[data-testid="stBaseButton-primary"] {{ background: {GREEN}; color: {BG}; font-weight: 600; border: 0; border-radius: 10px; }}
+.st-key-btn_analyze button {{ height: 46px; min-height: 46px; padding: 0 14px; border-radius: 10px; }}
+.st-key-btn_analyze button p {{ white-space: nowrap; font-size: 14px; font-weight: 600; margin: 0; }}
+.st-key-btn_analyze button span[data-testid="stIconMaterial"] {{ font-size: 18px; margin-right: 2px; }}
+.st-key-url_in div[data-baseweb="input"] > div {{ min-height: 46px; }}
+.st-key-url_in input {{ font-size: 14px; }}
 .st-key-btn_analyze button:disabled {{ background: #1E2A3B !important; color: {MUTE} !important; border: 1px solid #2F415A !important; box-shadow: none !important; opacity: 1 !important; }}
 .st-key-btn_analyze button:disabled span[data-testid="stIconMaterial"] {{ animation: pgspin 1s linear infinite; display: inline-block; }}
 @keyframes pgspin {{ to {{ transform: rotate(360deg); }} }}
@@ -273,7 +278,7 @@ def analyzer_card():
     res = st.session_state.get("last")
     with st.container(key="card_analyzer"):
         st.markdown(card_head("URL Analyzer", "Classify a URL in real time", "Live"), unsafe_allow_html=True)
-        c1, c2 = st.columns([4, 1.5], vertical_alignment="center")
+        c1, c2 = st.columns([3.4, 1.3], vertical_alignment="center")
         c1.text_input("URL", key="url_in", placeholder="http://paypal.com.secure-update.xyz/login?id=123",
                       label_visibility="collapsed", disabled=bool(job))
         if job:
