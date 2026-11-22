@@ -201,7 +201,7 @@ def kpi_row(eng):
     c = st.session_state["counts"]
     auc = eng.metrics.get("roc_auc_test")
     items = [
-        ("Total Scanned URLs", f"{c['total']:,}", "This session", SKY),
+        ("Total Scanned URLs", f"{c['total']:,}", f"{c['high']} high · {c['medium']} medium · {c['low']} low (this session)", SKY),
         ("High Risk Detected", f"{c['high']:,}", "This session", RED),
         ("Low Risk URLs", f"{c['low']:,}", "This session", GREEN),
         ("Model ROC-AUC", f"{auc:.2f}" if auc is not None else "n/a", "Held-out domains (test)", CYAN),
