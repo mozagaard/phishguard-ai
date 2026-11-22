@@ -13,7 +13,7 @@ BG, CARD, BORDER, TEXT, MUTE = "#0B0F15", "#131B26", "#223042", "#E6EDF5", "#8B9
 GREEN, RED, AMBER, BLUE, CYAN, SKY = "#00CC96", "#FF4B4B", "#F5A524", "#4DA3FF", "#22D3EE", "#7CC4FF"
 LEVEL = {
     "High": ("High Risk / Phishing", RED),
-    "Medium": ("Medium Risk / Suspicious", AMBER),
+    "Medium": ("Medium Risk / Unverified", AMBER),
     "Low": ("Low Risk / Likely Benign", GREEN),
 }
 
@@ -313,14 +313,18 @@ def why_card():
               'The model score is computed separately and may weigh signals differently.</div>', unsafe_allow_html=True)
 
 
-TELE = [  # key, label, max untuk bar
-    ("num_subdomains", "num_subdomains", 4),
-    ("entropy", "entropy", 4.5),
-    ("sensitive_keyword_count", "sensitive_keyword_count", 3),
-    ("brand_hits", "brand_hits", 2),
-    ("count_hyphen", "count_hyphen", 4),
-    ("has_ip", "has_ip", 1),
+TELE = [  # key, label, max untuk panjang bar, (batas kuning, batas merah) -- hanya panduan visual
+    ("num_subdomains", "num_subdomains", 4, (2, 3)),
+    ("entropy", "entropy", 4.5, (3.2, 3.6)),
+    ("sensitive_keyword_count", "sensitive_keyword_count", 3, (1, 2)),
+    ("brand_hits", "brand_hits", 2, (99, 1)),
+    ("count_hyphen", "count_hyphen", 4, (1, 3)),
+    ("has_ip", "has_ip", 1, (99, 1)),
 ]
+
+
+def tele_color(v, amber_at, red_at):
+    return RED if v >= red_at else AMBER if v >= amber_at else GREEN
 
 
 def telemetry_card():
@@ -333,19 +337,17 @@ def telemetry_card():
             st.markdown("".join(
                 f'<div class="feat"><div class="feat-top"><span style="font-weight:500;color:{MUTE}">{label}</span>'
                 f'<div class="skel" style="width:28px"></div></div><div class="bar thin"></div></div>'
-                for _, label, _ in TELE), unsafe_allow_html=True)
+                for _, label, _, _ in TELE), unsafe_allow_html=True)
             return
         if res is None:
             st.markdown('<div class="small">Analyze a URL to see its extracted features.</div>', unsafe_allow_html=True)
             return
         rows = []
-        for key, label, mx in TELE:
+        for key, label, mx, (am, rd) in TELE:
             v = res["telemetry"][key]
             ratio = min(v / mx, 1.0)
-            color = RED if ratio >= .6 else AMBER if ratio >= .3 else GREEN
+            color = tele_color(v, am, rd)
             vtxt = ("Yes" if v else "0  ·  No") if key == "has_ip" else f"{v}"
-            if key == "has_ip" and v:
-                vtxt, color = "Yes", RED
             rows.append(
                 f'<div class="feat"><div class="feat-top"><span style="font-weight:500">{label}</span>'
                 f'<span style="font-weight:600;color:{color}">{vtxt}</span></div>'

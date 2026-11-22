@@ -124,15 +124,30 @@ def spoof_rule(host):
     return bool(spoof_brands(host))
 
 
+SHORT_PREFIX = ("klik", "my", "m", "e", "i")
+SHORT_SUFFIX = ("mobile", "id", "online", "klik", "cs", "care")
+EXTRA_OFFICIAL = {"klikbca.com"}   # domain resmi tambahan khusus lapis aturan; VERIFIKASI dan lengkapi sendiri
+
+
+def _short_match(token, b):
+    return token == b or any(token == p + b for p in SHORT_PREFIX) or any(token == b + s for s in SHORT_SUFFIX)
+
+
 def brand_hit_list(reg):
-    """Merek yang muncul di dalam domain terdaftar padahal bukan domain resminya."""
+    """Merek yang muncul di dalam domain terdaftar padahal bukan domain resminya (lapis aturan + penjelasan).
+    Catatan: fitur ML `brand_hits` sengaja TIDAK diubah supaya tetap sama dengan saat training."""
     low = reg.lower()
+    if low in EXTRA_OFFICIAL:
+        return []
     toks = set(re.split(r"[.\-]", low))
     out = []
     for b, official in BRANDS.items():
         if reg in official:
             continue
-        if (b in SHORT_BRANDS and b in toks) or (b not in SHORT_BRANDS and b in low):
+        if b in SHORT_BRANDS:
+            if any(_short_match(t, b) for t in toks):
+                out.append(b)
+        elif b in low:
             out.append(b)
     return out
 
@@ -226,7 +241,9 @@ class Engine:
         elif p >= self.thr_high:
             level, why = "High", "The domain name pattern strongly resembles known phishing domains."
         elif p >= self.thr_med:
-            level, why = "Medium", "The domain name pattern looks somewhat suspicious. Treat with caution."
+            level, why = "Medium", "This domain is not in the popular list and its name pattern looks somewhat unusual. It could not be verified as safe."
+        elif brand_hit_list(reg):
+            level, why = "Medium", "A brand name appears in this domain, but it is not that brand's official domain. It could not be verified as safe."
         else:
             level, why = "Low", "The domain name pattern does not look suspicious."
         reasons = explain(host, reg, spoof_b) if level in ("High", "Medium") else []
