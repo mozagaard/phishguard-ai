@@ -34,7 +34,9 @@ def esc(x):
 CSS = f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-html, body, .stApp, [class*="st-"], button, input, textarea {{ font-family: 'Inter', system-ui, sans-serif; }}
+html, body, .stApp, p, label, input, textarea, div[data-testid="stMarkdownContainer"] {{ font-family: 'Inter', system-ui, sans-serif; }}
+button:not(:has([data-testid="stIconMaterial"])) {{ font-family: 'Inter', system-ui, sans-serif; }}
+[data-testid="stIconMaterial"], .material-symbols-rounded {{ font-family: 'Material Symbols Rounded' !important; }}
 .stApp {{ background: {BG}; }}
 header[data-testid="stHeader"] {{ background: transparent; }}
 .block-container {{ padding-top: 1.4rem; max-width: 1400px; }}
