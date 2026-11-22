@@ -34,6 +34,7 @@ def esc(x):
 CSS = f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 html, body, .stApp, p, label, input, textarea, div[data-testid="stMarkdownContainer"] {{ font-family: 'Inter', system-ui, sans-serif; }}
 button:not(:has([data-testid="stIconMaterial"])) {{ font-family: 'Inter', system-ui, sans-serif; }}
 [data-testid="stIconMaterial"], .material-symbols-rounded {{ font-family: 'Material Symbols Rounded' !important; }}
@@ -201,12 +202,13 @@ def kpi_row(eng):
     c = st.session_state["counts"]
     auc = eng.metrics.get("roc_auc_test")
     items = [
-        ("Total Scanned URLs", f"{c['total']:,}", f"{c['high']} high · {c['medium']} medium · {c['low']} low (this session)", SKY),
+        ("Total Scanned URLs", f"{c['total']:,}", "This session", SKY),
         ("High Risk Detected", f"{c['high']:,}", "This session", RED),
+        ("Medium Risk Detected", f"{c['medium']:,}", "This session", AMBER),
         ("Low Risk URLs", f"{c['low']:,}", "This session", GREEN),
         ("Model ROC-AUC", f"{auc:.2f}" if auc is not None else "n/a", "Held-out domains (test)", CYAN),
     ]
-    for i, (col, (lab, val, cap, color)) in enumerate(zip(st.columns(4, gap="medium"), items)):
+    for i, (col, (lab, val, cap, color)) in enumerate(zip(st.columns(5, gap="small"), items)):
         with col.container(key=f"card_kpi_{i}"):
             st.markdown(
                 f'<div class="kpi-label"><span class="kpi-dot" style="background:{color};box-shadow:0 0 8px {color}"></span>{esc(lab)}</div>'
