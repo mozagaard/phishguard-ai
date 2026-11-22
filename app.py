@@ -1,5 +1,7 @@
 """PhishGuard AI - Security Operations (Streamlit UI mengikuti mockup Figma)."""
 import html as _html
+import os
+import time
 
 import streamlit as st
 
@@ -16,6 +18,10 @@ LEVEL = {
 }
 
 
+STEP_DELAY = float(os.environ.get("PG_STEP_DELAY", "0.35"))   # jeda kecil agar tiap langkah terlihat
+FOOTNOTE = "Educational tool, not a replacement for a security filter. The model only reads the domain text."
+
+
 def rgba(hex_color, a):
     h = hex_color.lstrip("#")
     return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{a})"
@@ -28,9 +34,7 @@ def esc(x):
 CSS = f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-html, body, .stApp, p, label, input, textarea, div[data-testid="stMarkdownContainer"] {{ font-family: 'Inter', system-ui, sans-serif; }}
-button:not(:has([data-testid="stIconMaterial"])) {{ font-family: 'Inter', system-ui, sans-serif; }}
-[data-testid="stIconMaterial"], .material-symbols-rounded {{ font-family: 'Material Symbols Rounded' !important; }}
+html, body, .stApp, [class*="st-"], button, input, textarea {{ font-family: 'Inter', system-ui, sans-serif; }}
 .stApp {{ background: {BG}; }}
 header[data-testid="stHeader"] {{ background: transparent; }}
 .block-container {{ padding-top: 1.4rem; max-width: 1400px; }}
@@ -38,9 +42,24 @@ section[data-testid="stSidebar"] {{ background: #0E141C; border-right: 1px solid
 div[class*="st-key-card"] {{ background: {CARD}; border: 1px solid {BORDER}; border-radius: 14px; padding: 20px 22px; }}
 div[data-baseweb="input"] > div {{ background: {BG}; border: 1px solid #2F415A; border-radius: 10px; }}
 div[data-baseweb="input"] input {{ color: {TEXT}; }}
-button[kind="primary"] {{ background: {GREEN}; color: {BG}; font-weight: 600; border: 0; border-radius: 10px;
-  box-shadow: 0 0 16px {rgba(GREEN, .35)}; }}
 button[kind="primary"]:hover {{ background: #00e0a8; color: {BG}; }}
+
+button[kind="primary"], button[data-testid="stBaseButton-primary"] {{ background: {GREEN}; color: {BG}; font-weight: 600; border: 0; border-radius: 10px; }}
+.st-key-btn_analyze button:disabled {{ background: #1E2A3B !important; color: {MUTE} !important; border: 1px solid #2F415A !important; box-shadow: none !important; opacity: 1 !important; }}
+.st-key-btn_analyze button:disabled span[data-testid="stIconMaterial"] {{ animation: pgspin 1s linear infinite; display: inline-block; }}
+@keyframes pgspin {{ to {{ transform: rotate(360deg); }} }}
+.spinner {{ width: 14px; height: 14px; border-radius: 50%; border: 2px solid {rgba(BLUE, .25)}; border-top-color: {BLUE}; animation: pgspin .9s linear infinite; display: inline-block; flex: none; }}
+.step {{ display: flex; align-items: center; gap: 10px; font-size: 13px; margin-top: 12px; }}
+.chk {{ color: {GREEN}; font-weight: 700; width: 14px; text-align: center; flex: none; }}
+.pend {{ width: 14px; height: 14px; border-radius: 50%; border: 2px solid #2F415A; display: inline-block; flex: none; box-sizing: border-box; }}
+.skel {{ height: 10px; border-radius: 5px; background: rgba(42,58,80,.8); }}
+.banner {{ display: flex; align-items: center; gap: 12px; border-radius: 12px; padding: 14px 16px; margin-top: 14px; }}
+.banner b {{ font-size: 15px; }}
+.banner .bs {{ font-size: 12px; color: {TEXT}; margin-top: 3px; }}
+.why {{ display: flex; gap: 12px; margin-top: 14px; }}
+.why .d {{ width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: none; }}
+.why .t {{ font-size: 13px; font-weight: 600; color: {TEXT}; }}
+.why .x {{ font-size: 12px; color: {MUTE}; margin-top: 3px; line-height: 1.45; }}
 .pg-title {{ font-size: 20px; font-weight: 600; color: {TEXT}; padding-top: 6px; }}
 .pg-title span {{ color: {MUTE}; font-weight: 400; }}
 .pg-avatar {{ width: 40px; height: 40px; border-radius: 50%; background: #1B2A3D; border: 1.5px solid {rgba(GREEN, .5)};
@@ -90,26 +109,66 @@ def init_state():
     st.session_state.setdefault("counts", {"total": 0, "high": 0, "medium": 0, "low": 0})
     st.session_state.setdefault("last", None)
     st.session_state.setdefault("error", None)
+    st.session_state.setdefault("job", None)
 
 
-def do_scan(url):
-    res = load_engine().scan(url)
-    if res is None:
-        st.session_state["error"] = "Please enter a valid URL or domain, for example paypal.com.secure-update.xyz/login"
-        return
+def start_job(url):
     st.session_state["error"] = None
-    st.session_state["last"] = res
-    c = st.session_state["counts"]
-    c["total"] += 1
-    c[res["level"].lower()] += 1
+    st.session_state["job"] = {"url": str(url), "phase": 0}
 
 
 def scan_from_header():
-    do_scan(st.session_state.get("q_header", ""))
+    start_job(st.session_state.get("q_header", ""))
 
 
 def scan_from_card():
-    do_scan(st.session_state.get("url_in", ""))
+    start_job(st.session_state.get("url_in", ""))
+
+
+def run_job():
+    """Jalankan satu langkah analisis per rerun supaya state 'Analyzing' benar-benar terlihat."""
+    job = st.session_state.get("job")
+    if not job:
+        return
+    eng = load_engine()
+    if STEP_DELAY:
+        time.sleep(STEP_DELAY)
+    ph = job["phase"]
+    if ph == 0:
+        parsed = eng.parse(job["url"])
+        if parsed is None:
+            st.session_state["error"] = "Please enter a valid URL or domain, for example paypal.com.secure-update.xyz/login"
+            st.session_state["job"] = None
+            st.rerun()
+        job["host"], job["reg"] = parsed
+    elif ph == 1:
+        job["fz"] = eng.featurize(job["host"], job["reg"])
+    else:
+        res = eng.decide(job["url"], job["host"], job["reg"], job["fz"])
+        st.session_state["last"] = res
+        c = st.session_state["counts"]
+        c["total"] += 1
+        c[res["level"].lower()] += 1
+        st.session_state["job"] = None
+        st.rerun()
+    job["phase"] = ph + 1
+    st.rerun()
+
+
+def state_css():
+    """Warna tombol Analyze mengikuti hasil terakhir (merah untuk High, kuning untuk Medium)."""
+    if st.session_state.get("job"):
+        return ""
+    last = st.session_state.get("last")
+    lvl = last["level"] if last else None
+    if lvl == "High":
+        bg, fg = RED, "#FFFFFF"
+    elif lvl == "Medium":
+        bg, fg = AMBER, BG
+    else:
+        return ""
+    return (f"<style>.st-key-btn_analyze button {{ background: {bg} !important; color: {fg} !important; "
+            f"box-shadow: 0 0 16px {rgba(bg, .45)} !important; border: 0 !important; }}</style>")
 
 
 # ---------- komponen UI ----------
@@ -155,12 +214,16 @@ def result_panel(res):
                 f'<div class="small" style="margin-top:12px">Enter a URL above and press <b>Analyze URL</b>. '
                 f'Nothing has been analyzed yet.</div></div>')
     label, color = LEVEL[res["level"]]
+    popular = res["allowlisted"] and not res["spoof"]
     pct = f'{res["score"] * 100:.0f}%'
-    note = "Not used (popular domain)" if (res["allowlisted"] and not res["spoof"]) else f'{res["score"]:.2f} / 1.00'
-    width = 0 if (res["allowlisted"] and not res["spoof"]) else res["score"] * 100
-    big = "&mdash;" if (res["allowlisted"] and not res["spoof"]) else pct
+    note = "Not used (popular domain)" if popular else f'{res["score"]:.2f} / 1.00'
+    width = 0 if popular else res["score"] * 100
+    big = "&mdash;" if popular else pct
+    strong = res["level"] == "High"
+    border = f'{1.5 if strong else 1}px solid {rgba(color, .75 if strong else .35)}'
+    shadow = f'box-shadow:0 0 20px {rgba(color, .25)};' if strong else ''
     return (
-        f'<div class="panel" style="background:{rgba(color, .06)};border:1px solid {rgba(color, .35)}">'
+        f'<div class="panel" style="background:{rgba(color, .12 if strong else .06)};border:{border};{shadow}">'
         f'<div class="panel-label">PREDICTION RESULT</div>'
         f'<div class="badge-row"><span class="badge" style="background:{rgba(color, .16)};border:1px solid {rgba(color, .6)};color:{color};box-shadow:0 0 16px {rgba(color, .3)}">'
         f'<span class="kpi-dot" style="width:10px;height:10px;background:{color};box-shadow:0 0 8px {color}"></span>{label}</span>'
@@ -172,24 +235,80 @@ def result_panel(res):
         f' &middot; Host: {esc(res["host"])}</div></div>')
 
 
+def analyzing_panel(phase):
+    steps = ["URL parsed", "Features extracted", "Running Random Forest model…"]
+    rows = []
+    for i, t in enumerate(steps):
+        if i < phase:
+            mark, w, c = '<span class="chk">✓</span>', 500, MUTE
+        elif i == phase:
+            mark, w, c = '<span class="spinner"></span>', 600, TEXT
+        else:
+            mark, w, c = '<span class="pend"></span>', 400, MUTE
+        rows.append(f'<div class="step">{mark}<span style="font-weight:{w};color:{c}">{t}</span></div>')
+    width = [25, 55, 85][min(phase, 2)]
+    return (f'<div class="panel" style="background:{rgba(BLUE, .05)};border:1px solid {rgba(BLUE, .3)}">'
+            f'<div class="panel-label">ANALYZING</div>{"".join(rows)}'
+            f'<div class="bar" style="margin-top:16px"><div class="fill" style="width:{width}%;background:{BLUE};box-shadow:0 0 10px {rgba(BLUE, .55)}"></div></div></div>')
+
+
+def banner_html(res):
+    if res is None:
+        return ""
+    if res["level"] == "High":
+        color, title, sub = RED, "Do Not Open — Be Careful", "Do not enter passwords or personal data on this site."
+    elif res["level"] == "Medium":
+        color, title, sub = AMBER, "Proceed With Caution", "Do not enter passwords or personal data unless you are sure this site is legitimate."
+    else:
+        return ""
+    return (f'<div class="banner" style="background:{rgba(color, .16)};border:1px solid {rgba(color, .6)}">'
+            f'<span style="font-size:22px;color:{color}">⚠</span>'
+            f'<div><b style="color:{color}">{title}</b><div class="bs">{sub}</div></div></div>')
+
+
 def analyzer_card():
+    job = st.session_state.get("job")
+    res = st.session_state.get("last")
     with st.container(key="card_analyzer"):
         st.markdown(card_head("URL Analyzer", "Classify a URL in real time", "Live"), unsafe_allow_html=True)
-        c1, c2 = st.columns([4, 1.3], vertical_alignment="center")
+        c1, c2 = st.columns([4, 1.5], vertical_alignment="center")
         c1.text_input("URL", key="url_in", placeholder="http://paypal.com.secure-update.xyz/login?id=123",
-                      label_visibility="collapsed")
-        c2.button("Analyze URL", type="primary", key="btn_analyze", on_click=scan_from_card, use_container_width=True)
+                      label_visibility="collapsed", disabled=bool(job))
+        if job:
+            c2.button("Analyzing…", type="primary", key="btn_analyze", icon=":material/progress_activity:",
+                      disabled=True, use_container_width=True)
+        else:
+            c2.button("Analyze URL", type="primary", key="btn_analyze", icon=":material/radar:",
+                      on_click=scan_from_card, use_container_width=True)
         if st.session_state.get("error"):
             st.warning(st.session_state["error"])
-        st.markdown(result_panel(st.session_state.get("last")), unsafe_allow_html=True)
-        st.markdown('<div class="small" style="margin-top:14px">Educational tool, not a replacement for a security filter. '
-                    'The model only reads the domain text and never opens the URL. Scores are not definitive probabilities.</div>',
-                    unsafe_allow_html=True)
+        if job:
+            st.markdown(analyzing_panel(job["phase"]), unsafe_allow_html=True)
+        else:
+            st.markdown(result_panel(res) + banner_html(res), unsafe_allow_html=True)
+        st.markdown(f'<div class="small" style="margin-top:14px">{FOOTNOTE}</div>', unsafe_allow_html=True)
 
 
-TELE = [  # key, label, max untuk bar, catatan
+def why_card():
+    res = st.session_state.get("last")
+    if st.session_state.get("job") or not res or res["level"] == "Low":
+        return
+    color = RED if res["level"] == "High" else AMBER
+    reasons = res.get("reasons") or [(
+        "Pattern-based score",
+        "No single red flag stands out. The score comes from the overall pattern of the domain name (length, character mix).")]
+    with st.container(key="card_why"):
+        st.markdown(card_head("Why is this risky?", "Signals behind this verdict"), unsafe_allow_html=True)
+        st.markdown("".join(
+            f'<div class="why"><span class="d" style="background:{color};box-shadow:0 0 8px {rgba(color, .8)}"></span>'
+            f'<div><div class="t">{esc(t)}</div><div class="x">{esc(d)}</div></div></div>' for t, d in reasons)
+            + '<div class="small" style="margin-top:14px">These are common red flags read from the domain text. '
+              'The model score is computed separately and may weigh signals differently.</div>', unsafe_allow_html=True)
+
+
+TELE = [  # key, label, max untuk bar
     ("num_subdomains", "num_subdomains", 4),
-    ("entropy", "entropy (domain)", 4.5),
+    ("entropy", "entropy", 4.5),
     ("sensitive_keyword_count", "sensitive_keyword_count", 3),
     ("brand_hits", "brand_hits", 2),
     ("count_hyphen", "count_hyphen", 4),
@@ -199,8 +318,16 @@ TELE = [  # key, label, max untuk bar, catatan
 
 def telemetry_card():
     res = st.session_state.get("last")
+    job = st.session_state.get("job")
     with st.container(key="card_telemetry"):
-        st.markdown(card_head("URL Telemetry", "Features extracted from this URL", "Visual guide only", MUTE), unsafe_allow_html=True)
+        st.markdown(card_head("URL Telemetry", "Extracting features…" if job else "Features extracted from this URL",
+                              "Visual guide only", MUTE), unsafe_allow_html=True)
+        if job:
+            st.markdown("".join(
+                f'<div class="feat"><div class="feat-top"><span style="font-weight:500;color:{MUTE}">{label}</span>'
+                f'<div class="skel" style="width:28px"></div></div><div class="bar thin"></div></div>'
+                for _, label, _ in TELE), unsafe_allow_html=True)
+            return
         if res is None:
             st.markdown('<div class="small">Analyze a URL to see its extracted features.</div>', unsafe_allow_html=True)
             return
@@ -209,7 +336,9 @@ def telemetry_card():
             v = res["telemetry"][key]
             ratio = min(v / mx, 1.0)
             color = RED if ratio >= .6 else AMBER if ratio >= .3 else GREEN
-            vtxt = ("Yes" if v else "No") if key == "has_ip" else f"{v}"
+            vtxt = ("Yes" if v else "0  ·  No") if key == "has_ip" else f"{v}"
+            if key == "has_ip" and v:
+                vtxt, color = "Yes", RED
             rows.append(
                 f'<div class="feat"><div class="feat-top"><span style="font-weight:500">{label}</span>'
                 f'<span style="font-weight:600;color:{color}">{vtxt}</span></div>'
@@ -298,6 +427,7 @@ def page_home():
     a, b = st.columns(2, gap="medium")
     with a:
         analyzer_card()
+        why_card()
     with b:
         telemetry_card()
     st.write("")
@@ -306,6 +436,7 @@ def page_home():
         performance_card(eng)
     with d:
         importance_card(eng)
+    run_job()
 
 
 def page_scanner():
@@ -313,8 +444,10 @@ def page_scanner():
     a, b = st.columns(2, gap="medium")
     with a:
         analyzer_card()
+        why_card()
     with b:
         telemetry_card()
+    run_job()
 
 
 def page_analytics():
@@ -325,15 +458,18 @@ def page_analytics():
         performance_card(eng)
     with d:
         importance_card(eng)
+    run_job()
 
 
 def page_settings():
     header()
     settings_card(load_engine())
+    run_job()
 
 
 st.markdown(CSS, unsafe_allow_html=True)
 init_state()
+st.markdown(state_css(), unsafe_allow_html=True)
 if not default_artifact_path().exists():
     st.error("Model file not found: `artifacts/phishguard_v4.joblib`. Export it from the Colab notebook and place it in the artifacts folder.")
     st.stop()

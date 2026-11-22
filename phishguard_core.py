@@ -111,12 +111,73 @@ def brand_hits(host):
     return n
 
 
-def spoof_rule(host):
-    """Nama merek di SUBDOMAIN tapi domain terdaftarnya bukan milik merek itu."""
+def spoof_brands(host):
+    """Daftar merek yang muncul di SUBDOMAIN padahal domain terdaftarnya bukan milik merek itu."""
     e = _ext(host)
     reg = f"{e.domain}.{e.suffix}" if e.suffix else e.domain
     toks = set(re.split(r"[.\-]", e.subdomain.lower()))
-    return any(b in toks and reg not in official for b, official in BRANDS.items())
+    return sorted(b for b, official in BRANDS.items() if b in toks and reg not in official)
+
+
+def spoof_rule(host):
+    """Aturan terpisah (bukan ML): nama merek di SUBDOMAIN tapi domain terdaftarnya bukan milik merek itu."""
+    return bool(spoof_brands(host))
+
+
+def brand_hit_list(reg):
+    """Merek yang muncul di dalam domain terdaftar padahal bukan domain resminya."""
+    low = reg.lower()
+    toks = set(re.split(r"[.\-]", low))
+    out = []
+    for b, official in BRANDS.items():
+        if reg in official:
+            continue
+        if (b in SHORT_BRANDS and b in toks) or (b not in SHORT_BRANDS and b in low):
+            out.append(b)
+    return out
+
+
+BRAND_NAMES = {"paypal": "PayPal", "google": "Google", "microsoft": "Microsoft", "apple": "Apple", "amazon": "Amazon",
+               "facebook": "Facebook", "instagram": "Instagram", "netflix": "Netflix", "whatsapp": "WhatsApp",
+               "tokopedia": "Tokopedia", "shopee": "Shopee", "bca": "BCA", "bni": "BNI", "mandiri": "Mandiri", "gojek": "Gojek"}
+
+
+def _quoted(words):
+    q = [f"'{w}'" for w in words]
+    return q[0] if len(q) == 1 else ", ".join(q[:-1]) + " and " + q[-1]
+
+
+def explain(host, reg, spoof_b):
+    """Alasan yang bisa dibaca manusia, dihasilkan dari sinyal nyata di teks domain.
+    Ini adalah tanda bahaya umum (panduan), bukan rincian bobot internal model."""
+    items = []
+    for b in spoof_b:
+        name = BRAND_NAMES.get(b, b.title())
+        items.append(("Imitates a known brand", f"'{b}' appears in the subdomain of {reg}, which is not {name}'s official domain."))
+    for b in [x for x in brand_hit_list(reg) if x not in spoof_b][:1]:
+        name = BRAND_NAMES.get(b, b.title())
+        items.append(("Brand name inside the domain", f"'{b}' is part of {reg}, which is not an official {name} domain."))
+    words = [w for w in SUSPICIOUS_WORDS if w in host]
+    if words:
+        items.append(("Sensitive keywords in the domain", f"{_quoted(words[:3])} are common in credential-phishing domains."))
+    f = apex_features(reg)
+    e = _ext(host)
+    n_sub = len(e.subdomain.split(".")) if e.subdomain else 0
+    if f["has_ip"]:
+        items.append(("IP address instead of a domain name", "Legitimate services rarely ask you to sign in on a bare IP address."))
+    if n_sub >= 3:
+        items.append(("Many subdomain levels", f"{n_sub} subdomain levels in front of {reg} can hide the real domain."))
+    if f["hyphen_in_domain"] >= 2:
+        items.append(("Several hyphens in the domain", "Chained hyphenated words are a common way to look official."))
+    elif f["hyphen_in_domain"] == 1 and words:
+        items.append(("Hyphenated domain name", "Hyphens are often used to chain keywords together so the domain looks official."))
+    if f["digit_ratio"] >= 0.3 and f["domain_length"] >= 8:
+        items.append(("Many digits in the domain", f"{f['digit_ratio'] * 100:.0f}% of the characters are digits."))
+    if f["domain_entropy"] >= 3.6:
+        items.append(("Random-looking domain name", f"High character entropy ({f['domain_entropy']:.2f})."))
+    if f["domain_length"] >= 25:
+        items.append(("Very long domain name", f"The domain name is {f['domain_length']} characters long."))
+    return items[:4]
 
 
 def apex_features(reg):
@@ -140,14 +201,23 @@ class Engine:
         self.metrics = art.get("metrics", {})
         self.meta = art.get("meta", {})
 
-    def scan(self, url):
-        """Return dict hasil, atau None kalau input bukan URL/domain yang valid."""
+    # --- langkah 1: parsing ---
+    def parse(self, url):
+        """Return (host, reg) atau None kalau input bukan URL/domain yang valid."""
         host = to_hostname(url)
         if not host or "." not in host:
             return None
-        reg = reg_domain(host)
-        p = float(self.model.predict_proba(pd.DataFrame([apex_features(reg)])[self.features])[0, 1])
-        spoof = spoof_rule(host)
+        return host, reg_domain(host)
+
+    # --- langkah 2: ekstraksi fitur ---
+    def featurize(self, host, reg):
+        return {"feats": apex_features(reg), "spoof_brands": spoof_brands(host), "telemetry": self.telemetry(host, reg)}
+
+    # --- langkah 3: model + putusan ---
+    def decide(self, url, host, reg, fz):
+        p = float(self.model.predict_proba(pd.DataFrame([fz["feats"]])[self.features])[0, 1])
+        spoof_b = fz["spoof_brands"]
+        spoof = bool(spoof_b)
         in_allow = reg in self.allow
         if spoof:
             level, why = "High", "A brand name appears in the subdomain, but the registered domain does not belong to that brand."
@@ -159,8 +229,17 @@ class Engine:
             level, why = "Medium", "The domain name pattern looks somewhat suspicious. Treat with caution."
         else:
             level, why = "Low", "The domain name pattern does not look suspicious."
+        reasons = explain(host, reg, spoof_b) if level in ("High", "Medium") else []
         return {"input": str(url).strip(), "host": host, "domain": reg, "score": p, "level": level,
-                "reason": why, "spoof": spoof, "allowlisted": in_allow, "telemetry": self.telemetry(host, reg)}
+                "reason": why, "spoof": spoof, "allowlisted": in_allow, "telemetry": fz["telemetry"], "reasons": reasons}
+
+    def scan(self, url):
+        """Semua langkah sekaligus. Return dict hasil, atau None kalau input tidak valid."""
+        parsed = self.parse(url)
+        if parsed is None:
+            return None
+        host, reg = parsed
+        return self.decide(url, host, reg, self.featurize(host, reg))
 
     @staticmethod
     def telemetry(host, reg):
